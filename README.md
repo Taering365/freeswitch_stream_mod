@@ -1,5 +1,16 @@
 # mod_taering_stream
 
+## Overview
+
+A real-time bidirectional audio streaming module for FreeSWITCH.
+
+Features:
+- Stream call audio to backend over WebSocket
+- Inject PCM audio back into the call in real time
+- Support AI voice pipeline: ASR -> LLM -> TTS
+- Support barge-in / interrupt control
+- Designed for low-latency and high-concurrency scenarios
+
 `mod_taering_stream` 是一个面向 FreeSWITCH 的实时双向音频推流模块，提供 `taering_stream` API，可将通话音频通过 `WebSocket` 推送到后端，并将后端返回的音频实时注入到 FreeSWITCH 通话链路中。
 
 该模块适合语音机器人、实时 ASR、TTS 回放、全双工对话、打断控制等场景。
