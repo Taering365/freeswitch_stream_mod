@@ -49,10 +49,7 @@ FreeSWITCH playback injection
 
 该模块适合语音机器人、实时 ASR、TTS 回放、全双工对话、打断控制等场景。
 
-## 联系方式
 
-- [商用授权请与我联系](mailto:taering@vip.qq.com)
-- 个人主页：https://www.liaoxinghui.com
 
 
 ## 项目定位
@@ -121,8 +118,11 @@ fs_cli -x "show api" | grep taering_stream
 - `mod_taering_stream.conf.xml`
 - `mod_taering_stream.data`
 
-如果你需要商用授权或定制部署支持，请通过下方联系方式联系我。
+## 联系方式
 
+- 个人邮箱: [taering@vip.qq.com](mailto:taering@vip.qq.com)
+- 个人主页: [https://www.liaoxinghui.com](https://www.liaoxinghui.com)
+  
 ## API 用法
 
 ### 命令列表
