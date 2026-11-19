@@ -1,75 +1,195 @@
+<div align="center">
+
 # mod_taering_stream
 
-# 🚀 FreeSWITCH AI Real-time Streaming Module
+**FreeSWITCH AI 实时双向音频流模块 · 支持用户插话打断**
 
-> Real-time bidirectional audio streaming module for FreeSWITCH  
-> Built for AI voice systems (ASR + LLM + TTS) with low latency & barge-in support
+让 FreeSWITCH 通话直接接上你的 ASR / LLM / TTS，20ms 分片的低延迟双向 PCM，开箱即用的插话打断
 
----
+![version](https://img.shields.io/badge/version-0.54-blue)
+![freeswitch](https://img.shields.io/badge/FreeSWITCH-1.10.x-green)
+![os](https://img.shields.io/badge/Debian-12%20x86__64-orange)
+![license](https://img.shields.io/badge/license-商业授权%20·%201路免费试用-red)
 
-## 🔥 Overview
+[产品介绍](#-产品介绍) · [快速开始](#-快速开始) · [完整集成手册](#-完整集成手册v054) · [版本记录](#-版本记录) · [FAQ](#-faq) · [联系作者](#-联系作者)
 
-This module enables **real-time audio streaming** from FreeSWITCH to backend services and supports **injecting PCM audio back into calls**.
-
-It is designed for building modern **AI voice systems**, including:
-
-- 🤖 AI outbound calling systems
-- 🎙️ Real-time voice bots
-- 📞 Intelligent IVR systems
-- 🧠 ASR + LLM + TTS pipelines
+</div>
 
 ---
 
-## ⚡ Key Features
+## ✨ 产品介绍
 
-- 🎧 **Real-time RTP audio streaming → WebSocket**
-- 🔊 **PCM audio injection (no file playback)**
-- ⚡ **Low latency audio pipeline**
-- 🔁 **Bidirectional audio (full-duplex)**
-- 🧠 **AI integration ready (ASR / LLM / TTS)**
-- ✋ **Barge-in support (interrupt TTS playback)**
-- 📈 Designed for **high concurrency**
+### 它解决什么问题
+
+用 FreeSWITCH 做 AI 电话机器人、智能外呼、语音客服时，最难的往往不是 ASR、LLM、TTS 本身，而是 **把电话里的声音实时送出去，再把 AI 的声音实时塞回来**：
+
+- 传统做法是录音文件 + `playback`，延迟高、无法流式，机器人说话时用户插不了嘴；
+- ESL 轮询 + 文件落盘的方案，高并发时磁盘 IO 和线程数一起爆炸；
+- 自己写 media bug 模块，要处理 WebSocket、重连、缓冲、采样率、loopback 方向、线程模型……一个坑接一个坑。
+
+`mod_taering_stream` 把这一层做成了一个 **独立、稳定、可商用的 FreeSWITCH 模块**：通话音频以裸 PCM 通过 WebSocket 实时推给你的后端，后端返回的 PCM 直接注入通话，你只需专注 AI 业务本身。
+
+### 架构
+
+```mermaid
+flowchart LR
+    A["主叫 / 被叫"] <-->|"RTP"| B["FreeSWITCH"]
+    B <--> C["mod_taering_stream"]
+    C -->|"上行：PCM16LE 二进制帧"| D["你的媒体后端<br/>(WebSocket Server)"]
+    D -->|"下行：PCM16LE 二进制帧"| C
+    D --> E["ASR → LLM → TTS"]
+    F["业务系统<br/>Java / Python / Go"] -->|"HTTP REST / ESL / Dialplan"| C
+```
+
+### 核心能力
+
+| 能力 | 说明 |
+|---|---|
+| 🔁 全双工实时音频 | 上行 FreeSWITCH → WS、下行 WS → FreeSWITCH 同时进行，`ws://` / `wss://` 均支持 |
+| 🔊 PCM 直接注入 | 下行裸 `PCM16LE` 直接进入通话媒体帧，不落盘、不走 `playback`，适合流式 TTS |
+| ✋ 插话打断（Barge-in） | `interrupt_playback` / WS `clear` 一键清空播放队列，并回报已播放进度 |
+| 🎚️ 三种音频组织 | `mono`（实时 ASR）、`mixed`（双方混音）、`stereo`（左=read / 右=write，便于说话人分离） |
+| 🧩 五种调用方式 | HTTP REST、`taering_stream_json` + ESL、传统 CLI、FreeSWITCH 进程内 API、Dialplan application |
+| 🛡️ 生产级稳定性 | 断线指数退避重连、多后端轮询分流、TX/RX ring 缓冲与丢帧计数、多 network worker |
+| 🔌 Loopback 感知 | 自动识别 `loopback_leg=A` 并调整采集/注入方向 |
+| 📈 可观测 | `stats` 运行指标、`taering_stream::*` 自定义事件、单会话状态查询 |
+| 🔑 幂等与关联 | `request_id` 启动幂等、`external_id` 关联业务 `call_id` |
+| 📴 离线容忍 | 在线授权 + 本地签名缓存，网络短暂不可达不影响业务 |
+
+### 典型场景
+
+- 🤖 **AI 智能外呼 / 电话机器人**：流式 ASR + 大模型 + 流式 TTS，用户随时插话
+- 🎧 **AI 语音客服 / 智能 IVR**：替代按键菜单，自然语言导航
+- 📊 **实时质检与坐席辅助**：`stereo` 分轨送入 ASR，实时提示话术、风险词
+- 🌐 **实时翻译 / 语音分析**：任意 WebSocket 服务都能接入通话音频
+
+### 与常见方案的对比
+
+> 以下为功能定位层面的客观对比，开源项目版本迭代较快，具体以各项目最新文档为准。
+
+| 维度 | 录音文件 + playback | 常见开源推流模块（如 mod_audio_fork / mod_audio_stream 开源版） | **mod_taering_stream** |
+|---|---|---|---|
+| 上行实时推流 | ❌ | ✅ | ✅ |
+| 下行音频回注 | 文件播放 | 多以 base64 / 文件落盘后播放为主 | ✅ 二进制 PCM 直接注入（兼容 base64/文件） |
+| 插话打断 + 已播进度回报 | ❌ | 需自行实现 | ✅ 内置 |
+| HTTP REST 控制（无需 ESL） | ❌ | 一般无 | ✅ |
+| 启动幂等 / 业务 ID 关联 | ❌ | 一般无 | ✅ `request_id` / `external_id` |
+| 多后端轮询 / 断线重连 | — | 视实现而定 | ✅ |
+| Loopback 方向识别 | — | 一般无 | ✅ |
+| 商业支持与持续升级 | — | 社区 | ✅ 作者直接支持 |
+
+### 试用与授权
+
+- **免费试用**：未授权状态下即可使用，最多 **1 路** 并发媒体流，功能完整无阉割，可直接做完整联调。
+- **商业授权**：授权生效后 **不限并发路数**（以机器性能为准），后台审核通过自动生效，无需重启 FreeSWITCH。
+- **获取方式**：模块以二进制交付包形式提供，**请通过下方联系方式获取交付包与商用报价**。
+
+### 📮 联系作者
+
+- 邮箱：[taering@vip.qq.com](mailto:taering@vip.qq.com)
+- 邮箱：[taering4417@gmail.com](mailto:taering4417@gmail.com)
+- 主页：[https://www.liaoxinghui.com](https://www.liaoxinghui.com)
+
+> 联系时建议附上：FreeSWITCH 版本、操作系统、预计并发路数、业务场景（外呼 / 客服 / 质检等），便于快速给出部署建议。
 
 ---
 
-## 🏗️ Architecture
+## 🚀 快速开始
 
-```text```
-Caller
-  ↓
-FreeSWITCH
-  ↓
-mod_taering_stream
-  ↓ WebSocket
-Backend (ASR → LLM → TTS)
-  ↓ PCM audio
-FreeSWITCH playback injection
+> 目标：5 分钟内在一台已安装 FreeSWITCH 的机器上跑通“通话音频 → 后端 → 回注通话”的闭环。
 
-`mod_taering_stream` 是一个面向 FreeSWITCH 的实时双向音频推流模块，提供 `taering_stream` API，可将通话音频通过 `WebSocket` 推送到后端，并将后端返回的音频实时注入到 FreeSWITCH 通话链路中。
+### 1. 环境要求
 
-该模块适合语音机器人、实时 ASR、TTS 回放、全双工对话、打断控制等场景。
+| 项目 | 推荐基线 |
+|---|---|
+| 操作系统 | Debian 12 x86_64 |
+| FreeSWITCH | 1.10.x（推荐 1.10.12，标准安装目录 `/opt/freeswitch`） |
+| 运行依赖 | `libwebsockets`、OpenSSL 3.x |
 
+```bash
+sudo apt-get update
+sudo apt-get install -y libwebsockets-dev libssl-dev
+```
 
+### 2. 安装模块
 
+联系作者获取交付包后，将模块和配置放到 FreeSWITCH 对应目录（以标准 `/opt/freeswitch` 为例，实际目录以 `fs_cli -x "global_getvar mod_dir"` / `fs_cli -x "global_getvar conf_dir"` 为准）：
 
-## 联系方式
+```bash
+sudo cp mod_taering_stream.so /opt/freeswitch/lib/freeswitch/mod/
+sudo cp mod_taering_stream.conf.xml /opt/freeswitch/etc/freeswitch/autoload_configs/
+```
 
-- 个人邮箱: [taering@vip.qq.com](mailto:taering@vip.qq.com)
-- 个人邮箱: [taering4417@gmail.com](mailto:taering4417@gmail.com)
-- 个人主页: [https://www.liaoxinghui.com](https://www.liaoxinghui.com)
-  
+### 3. 最小配置
 
+编辑 `autoload_configs/mod_taering_stream.conf.xml`，至少填写后端地址：
 
+```xml
+<configuration name="mod_taering_stream.conf" description="mod_taering_stream">
+  <settings>
+    <param name="default_ws_url" value="ws://127.0.0.1:9000/stream"/>
+    <param name="default_mix_type" value="mono"/>
+    <param name="default_sample_rate" value="16000"/>
+    <param name="enable_barge_in" value="true"/>
+  </settings>
+</configuration>
+```
 
+### 4. 加载并验证
 
-# mod_taering_stream 0.54 商业接口与集成手册
+```bash
+fs_cli -x "load mod_taering_stream"
+fs_cli -x "taering_stream version"
+fs_cli -x "taering_stream stats"
+```
+
+### 5. 启动一个回声后端（Python）
+
+把收到的音频原样送回，拨通后就能听到自己的声音，用于验证双向链路：
+
+```bash
+pip install websockets
+```
+
+```python
+import asyncio, json, websockets
+
+async def echo(ws):
+    start = json.loads(await ws.recv())          # 首帧为 start 控制消息
+    print("start:", start)
+    async for msg in ws:
+        if isinstance(msg, bytes):
+            await ws.send(msg)                   # mono 模式下原样回送 PCM16LE
+        elif msg.startswith("{") and json.loads(msg).get("type") == "stop":
+            break  # 收到 stop 控制帧，结束会话
+
+async def main():
+    async with websockets.serve(echo, "127.0.0.1", 9000):
+        await asyncio.Future()
+
+asyncio.run(main())
+```
+
+### 6. 拨测
+
+对任意一路已接通的通话执行（或参考手册第 7 节写入 Dialplan）：
+
+```bash
+fs_cli -x "taering_stream <uuid> start"
+```
+
+听到自己的声音即表示双向链路已通。接下来把回声逻辑替换为 ASR → LLM → TTS，即可得到一个可插话的 AI 电话机器人。
+
+---
+
+## 📘 完整集成手册（v0.54）
+
 
 本文档面向购买、部署和集成 `mod_taering_stream` 的客户，说明模块当前版本 `0.54` 的公开调用方式、XML 配置、字段、返回格式、Python 示例、媒体后端协议、授权与运维功能。
 
-
 阅读索引：第 4～6 节为控制接口，第 7 节为完整 Dialplan 示例，第 8～9 节为媒体协议与事件，第 11 节为全部 XML 参数，第 12～13 节为授权与排障，第 14 节为进程内模块集成。
 
-## 1. 产品边界
+### 1. 产品边界
 
 `mod_taering_stream` 是独立的 FreeSWITCH 双向音频流模块，只负责：
 
@@ -81,7 +201,7 @@ FreeSWITCH playback injection
 
 模块不负责外呼、入呼、振铃、应答、桥接、挂机原因或其他呼叫状态。客户可以独立使用本模块，也可以由 `mod_fcc`、ESL 程序或其他呼叫控制系统调用。
 
-## 2. 调用方式选择
+### 2. 调用方式选择
 
 | 方式 | 使用场景 | 是否需要 ESL | 推荐程度 |
 |---|---|---:|---:|
@@ -93,9 +213,9 @@ FreeSWITCH playback injection
 
 HTTP 和 ESL 最终调用同一个媒体会话核心，行为一致。FCC 运行在同一个 FreeSWITCH 进程时，建议通过 `switch_api_execute("taering_stream_json", ...)` 调用，不需要 ESL，也不需要经过 HTTP。
 
-## 3. 基础概念
+### 3. 基础概念
 
-### 3.1 标识字段
+#### 3.1 标识字段
 
 | 字段 | 类型 | 最大长度 | 必填 | 说明 |
 |---|---|---:|---:|---|
@@ -106,7 +226,7 @@ HTTP 和 ESL 最终调用同一个媒体会话核心，行为一致。FCC 运行
 
 当前版本一个 `channel_id` 同时只允许一个活动媒体流。
 
-### 3.2 媒体状态
+#### 3.2 媒体状态
 
 | 状态 | 说明 |
 |---|---|
@@ -117,7 +237,7 @@ HTTP 和 ESL 最终调用同一个媒体会话核心，行为一致。FCC 运行
 
 这些只是媒体状态，不代表电话是否振铃、应答或挂机。
 
-### 3.3 通用成功响应
+#### 3.3 通用成功响应
 
 查询或创建成功时：
 
@@ -155,7 +275,7 @@ HTTP 和 ESL 最终调用同一个媒体会话核心，行为一致。FCC 运行
 {"ok":true,"stream_id":"stream_...","action":"pause_capture","accepted":true}
 ```
 
-### 3.4 通用失败响应
+#### 3.4 通用失败响应
 
 ```json
 {"ok":false,"code":"STREAM_NOT_FOUND","message":"stream_id or channel_id does not match an active stream"}
@@ -175,9 +295,9 @@ HTTP 和 ESL 最终调用同一个媒体会话核心，行为一致。FCC 运行
 | `NOT_FOUND` | 404 | HTTP 路由不存在或请求体不是 JSON object |
 | `INTERNAL_ERROR` | 500/400 | 内部创建或返回异常 |
 
-## 4. HTTP REST API
+### 4. HTTP REST API
 
-### 4.1 HTTP 配置与鉴权
+#### 4.1 HTTP 配置与鉴权
 
 HTTP 默认关闭。配置文件：`conf/autoload_configs/mod_taering_stream.conf.xml`。
 
@@ -217,7 +337,7 @@ HEADERS = {
 }
 ```
 
-### 4.2 健康检查
+#### 4.2 健康检查
 
 ```http
 GET /api/v1/health
@@ -239,7 +359,7 @@ response.raise_for_status()
 print(response.json())
 ```
 
-### 4.3 创建媒体流
+#### 4.3 创建媒体流
 
 ```http
 POST /api/v1/streams
@@ -289,7 +409,7 @@ stream_id = data["stream_id"]
 print(stream_id, data["state"])
 ```
 
-### 4.4 查询媒体流
+#### 4.4 查询媒体流
 
 ```http
 GET /api/v1/streams/{stream_id}
@@ -316,7 +436,7 @@ else:
     print(data["state"], data["connected"], data["tx_drop_frames"])
 ```
 
-### 4.5 媒体动作统一端点
+#### 4.5 媒体动作统一端点
 
 ```http
 POST /api/v1/streams/{stream_id}/actions
@@ -325,7 +445,7 @@ Content-Type: application/json
 
 请求体至少包含 `action`。以下六种动作用于日常媒体控制，成功返回 HTTP 200 和通用动作响应。此端点复用 JSON 分发器，也接受 `get`（返回会话对象）和 `stop`（返回动作响应）；常规查询和停止建议使用第 4.4、4.6 节的 GET/DELETE。
 
-#### 4.5.1 pause_capture：暂停上行采集
+##### 4.5.1 pause_capture：暂停上行采集
 
 停止采集新的 FreeSWITCH → 后端音频，不影响后端音频注入；已进入发送队列的音频不会因此清空，可能继续发出。
 
@@ -338,7 +458,7 @@ response.raise_for_status()
 print(response.json())
 ```
 
-#### 4.5.2 resume_capture：恢复上行采集
+##### 4.5.2 resume_capture：恢复上行采集
 
 ```python
 response = requests.post(
@@ -348,7 +468,7 @@ response = requests.post(
 response.raise_for_status()
 ```
 
-#### 4.5.3 pause_playback：暂停下行注入
+##### 4.5.3 pause_playback：暂停下行注入
 
 暂停后端 → FreeSWITCH 的 PCM 注入及尚未开始的文件任务，不停止上行采集，也不停止接收后端音频。暂停期间下行仍入队，队列满会丢弃旧帧；恢复后消费保留的音频。已经进入文件播放函数的任务不会因此立即暂停。
 
@@ -360,7 +480,7 @@ response = requests.post(
 response.raise_for_status()
 ```
 
-#### 4.5.4 resume_playback：恢复下行注入
+##### 4.5.4 resume_playback：恢复下行注入
 
 ```python
 response = requests.post(
@@ -370,7 +490,7 @@ response = requests.post(
 response.raise_for_status()
 ```
 
-#### 4.5.5 interrupt_playback：打断并清空播放队列
+##### 4.5.5 interrupt_playback：打断并清空播放队列
 
 立即清空当前下行 PCM ring 和尚未开始的兼容文件任务。必须在 XML 中配置 `enable_barge_in=true`，否则返回 `ACTION_FAILED`。不停止上行或 WebSocket，也不会撤销已经注入的音频、终止正在执行的文件播放，或阻止后端继续发送旧 TTS。业务后端应取消旧合成与发送任务，再清空播放队列。
 
@@ -384,7 +504,7 @@ if not response.ok:
 print("播放已打断", response.json())
 ```
 
-#### 4.5.6 send_text：向媒体后端透传文本
+##### 4.5.6 send_text：向媒体后端透传文本
 
 请求：
 
@@ -407,7 +527,7 @@ response = requests.post(
 response.raise_for_status()
 ```
 
-### 4.6 停止媒体流
+#### 4.6 停止媒体流
 
 ```http
 DELETE /api/v1/streams/{stream_id}
@@ -426,9 +546,9 @@ else:
     print(response.json())
 ```
 
-## 5. 通过 ESL 调用
+### 5. 通过 ESL 调用
 
-### 5.1 准备 Python ESL 库
+#### 5.1 准备 Python ESL 库
 
 FreeSWITCH 源码构建环境通常在 `libs/esl` 提供 Python ESL 模块。安装方式随发行版而异。代码运行前需确保：
 
@@ -438,7 +558,7 @@ import ESL
 
 能够成功。ESL 连接参数取自 `event_socket.conf.xml`。生产环境不要开放无访问控制的 8021 端口。
 
-### 5.2 公共 ESL 调用封装
+#### 5.2 公共 ESL 调用封装
 
 ```python
 import json
@@ -467,7 +587,7 @@ def stream_json(con, payload):
     return data
 ```
 
-### 5.3 ESL 创建媒体流
+#### 5.3 ESL 创建媒体流
 
 入参、默认值和返回字段与 HTTP 创建接口一致；唯一额外字段是 `action=start`。
 
@@ -486,7 +606,7 @@ stream_id = result["stream_id"]
 print(result)
 ```
 
-### 5.4 ESL 查询媒体流
+#### 5.4 ESL 查询媒体流
 
 可传 `stream_id`，也可为旧系统传 `channel_id`。同时存在时优先使用 `stream_id`；非空 `stream_id` 查找失败时不会回退到 `channel_id`。
 
@@ -495,27 +615,27 @@ result = stream_json(con, {"action": "get", "stream_id": stream_id})
 print(result["state"], result["connected"])
 ```
 
-### 5.5 ESL 暂停与恢复上行
+#### 5.5 ESL 暂停与恢复上行
 
 ```python
 stream_json(con, {"action": "pause_capture", "stream_id": stream_id})
 stream_json(con, {"action": "resume_capture", "stream_id": stream_id})
 ```
 
-### 5.6 ESL 暂停与恢复下行
+#### 5.6 ESL 暂停与恢复下行
 
 ```python
 stream_json(con, {"action": "pause_playback", "stream_id": stream_id})
 stream_json(con, {"action": "resume_playback", "stream_id": stream_id})
 ```
 
-### 5.7 ESL 打断播放
+#### 5.7 ESL 打断播放
 
 ```python
 stream_json(con, {"action": "interrupt_playback", "stream_id": stream_id})
 ```
 
-### 5.8 ESL 发送文本
+#### 5.8 ESL 发送文本
 
 ```python
 stream_json(con, {
@@ -525,7 +645,7 @@ stream_json(con, {
 })
 ```
 
-### 5.9 ESL 停止媒体流
+#### 5.9 ESL 停止媒体流
 
 停止只释放媒体资源，不会执行 `uuid_kill`，不会改变 FCC 呼叫状态。
 
@@ -533,7 +653,7 @@ stream_json(con, {
 stream_json(con, {"action": "stop", "stream_id": stream_id})
 ```
 
-### 5.10 ESL 查询版本、指标和授权
+#### 5.10 ESL 查询版本、指标和授权
 
 ```python
 def legacy_api(con, command, args=""):
@@ -547,7 +667,7 @@ print(legacy_api(con, "taering_stream", "stats"))
 print(legacy_api(con, "taering_stream", "license"))
 ```
 
-## 6. 传统 taering_stream API（ESL 兼容）
+### 6. 传统 taering_stream API（ESL 兼容）
 
 传统接口使用 FreeSWITCH UUID 作为控制主键，返回文本结果；操作命令通常以 `+OK`、`-ERR` 或 `-USAGE` 开头，`stats` 则为多行键值输出。新项目推荐使用结构化的 `taering_stream_json`。
 
@@ -581,9 +701,9 @@ print(legacy_api(con, "taering_stream", f"{uuid} send_text language=zh-CN"))
 print(legacy_api(con, "taering_stream", f"{uuid} stop"))
 ```
 
-## 7. Dialplan 调用
+### 7. Dialplan 调用
 
-### 7.1 调用格式
+#### 7.1 调用格式
 
 模块作为 FreeSWITCH application 使用时自动取得当前 channel UUID。
 
@@ -626,7 +746,7 @@ application_xml = (
 print(application_xml)
 ```
 
-### 7.2 完整呼叫路由 XML
+#### 7.2 完整呼叫路由 XML
 
 模块配置与呼叫路由是两个文件：第 11 节的 `mod_taering_stream.conf.xml` 配置后端与媒体参数；本节的 Dialplan XML 决定哪个号码触发推流。以下完整示例适用于接听后桥接分机并接入媒体后端的场景，可直接复制保存。
 
@@ -672,7 +792,7 @@ fs_cli -x "xml_locate dialplan"
 
 检查输出中是否存在 `taering_stream_demo`。仅修改 Dialplan 不需要重载本模块；修改模块 XML 的生效方式见第 11.3 节。
 
-### 7.3 客服业务 metadata
+#### 7.3 客服业务 metadata
 
 传统 CLI 和 Dialplan 支持把合法 JSON 原样加入后端 `start/stop` 控制帧的 `metadata` 字段；JSON 应紧凑且不含空格，XML 属性内的引号必须转义：
 
@@ -683,13 +803,13 @@ fs_cli -x "xml_locate dialplan"
 
 `scene`、`language` 是业务自定义示例，模块不解释其含义。HTTP/JSON 创建接口当前不读取 `metadata`，需要关联业务时使用 `external_id`，或通过 `send_text` 与后端约定控制消息。
 
-## 8. 媒体后端 WebSocket 协议
+### 8. 媒体后端 WebSocket 协议
 
-### 8.1 连接角色
+#### 8.1 连接角色
 
 `mod_taering_stream` 是 WebSocket client，客户的 ASR/AI/TTS 服务是 WebSocket server。每个媒体流使用一条独立连接。
 
-### 8.2 start 文本帧
+#### 8.2 start 文本帧
 
 连接成功后模块先发送：
 
@@ -706,7 +826,7 @@ fs_cli -x "xml_locate dialplan"
 
 传统 CLI/dialplan 启动时还可携带 `metadata` JSON。模块不再发送 `ringing`、`early_media`、`answered` 或 `hangup`；呼叫状态由 FCC/ESL 业务系统处理。
 
-### 8.3 FreeSWITCH → 后端二进制帧
+#### 8.3 FreeSWITCH → 后端二进制帧
 
 - 编码：有符号 `PCM16LE`；
 - 文件头：无，裸 PCM；
@@ -758,11 +878,11 @@ async def main():
 asyncio.run(main())
 ```
 
-### 8.4 后端 → FreeSWITCH 二进制帧
+#### 8.4 后端 → FreeSWITCH 二进制帧
 
 生产推荐路径：发送单声道裸 `PCM16LE` WebSocket binary frame，采样率与 `start.sample_rate` 一致，建议每帧 20ms 或 40ms。
 
-### 8.5 文本控制和兼容音频
+#### 8.5 文本控制和兼容音频
 
 清空播放队列：
 
@@ -791,7 +911,7 @@ asyncio.run(main())
 
 高并发实时业务应使用二进制 PCM，不建议 base64 或文件落盘。
 
-### 8.6 stop 文本帧
+#### 8.6 stop 文本帧
 
 主动停止时模块尝试发送：
 
@@ -808,7 +928,7 @@ asyncio.run(main())
 
 网络异常或 channel 被 FreeSWITCH 销毁时，连接可能直接关闭，后端不能依赖一定收到 stop。
 
-### 8.7 实际采样率、分片与 loopback 方向
+#### 8.7 实际采样率、分片与 loopback 方向
 
 模块启动媒体流时读取 FreeSWITCH 通道的 `actual_samples_per_second`，有效时优先于请求和 XML 里的采样率。例如通道实际为 8000 Hz，即使请求 `16000`，后端 `start.sample_rate` 仍可能是 8000。模块没有独立的 PCM 重采样过程，后端必须以 `start` 帧为准；ASR/TTS 需要其他采样率时由后端转换。改变配置不代表改变已协商的电话编码。
 
@@ -818,7 +938,7 @@ asyncio.run(main())
 
 下行以 `packet_ms` 为单位切分，不足一片时补零。建议每次发送完整分片或其整数倍，避免频繁短片引入补零静音。TX/RX ring 满时丢弃最旧帧以保留较新音频；不要把整段长 TTS 一次灌入小缓冲，应按播放节奏流式发送。
 
-### 8.8 地址池、重连与后端恢复
+#### 8.8 地址池、重连与后端恢复
 
 未显式指定 URL 时，新建会话从 `default_ws_url/default_ws_urls` 合并的地址池轮询选择。地址池用于新会话分流，不提供后端健康检查；断线重连使用本会话原 URL，不自动切换到池内其他地址。
 
@@ -826,7 +946,7 @@ asyncio.run(main())
 
 重连成功后重新发送 `start`，沿用原媒体会话的 `stream_id` 和业务关联信息。后端应按断链重建媒体处理状态，不能把每次连接都当作新电话。断线期间不采集新的上行音频，模块不提供断线音频补录或可靠消息重放保证。
 
-## 9. FreeSWITCH 自定义媒体事件
+### 9. FreeSWITCH 自定义媒体事件
 
 事件子类：
 
@@ -858,7 +978,7 @@ while True:
     })
 ```
 
-### 9.1 事件含义与播放进度
+#### 9.1 事件含义与播放进度
 
 | 子类 / `Play-State` | 触发含义 |
 |---|---|
@@ -877,7 +997,7 @@ while True:
 
 当前 PCM 路径不会逐片发出 `queued/start/done` 或周期进度事件；打断时才通过 `interrupted` 报告进度。文件事件的进度字段当前为 0。不能仅靠这些事件准确判断每一句实时 TTS 是否完整播完，也不能把“已注入”解释为远端已确认听到。
 
-## 10. 生产接入注意事项
+### 10. 生产接入注意事项
 
 - HTTP 默认只监听 `127.0.0.1`；不要把明文 HTTP 直接暴露公网。
 - HTTP Token 和 ESL 密码是两套独立凭据，都必须使用高强度随机值。
@@ -889,9 +1009,9 @@ while True:
 - 实时主路径使用 binary PCM；base64 和文件播放仅作为兼容方案。
 - 客户升级模块后应完成 HTTP 鉴权、ESL 控制、真实 channel 挂载、双向 PCM、断线重连和打断回归测试。
 
-## 11. 模块 XML 配置完整说明
+### 11. 模块 XML 配置完整说明
 
-### 11.1 文件位置、最小配置与完整配置
+#### 11.1 文件位置、最小配置与完整配置
 
 配置文件名为 `mod_taering_stream.conf.xml`。部署路径为 `${conf_dir}/autoload_configs/mod_taering_stream.conf.xml`；标准 `/opt/freeswitch` 安装通常对应 `/opt/freeswitch/etc/freeswitch/autoload_configs/mod_taering_stream.conf.xml`。先查询实际目录：
 
@@ -922,7 +1042,7 @@ fs_cli -x "global_getvar conf_dir"
 
 此例开启业务主动打断能力，需要后端自行判断客户插话并发送 `clear` 或调用打断接口；模块不会自动做 ASR、VAD、LLM 或 TTS。需要 HTTP 控制时，在同一 `<settings>` 中将 `api_enabled` 改为 `true` 并加入第 4.1 节的监听地址、端口和 Token，避免重复定义同名普通参数。
 
-#### 全部 26 项的完整 XML
+##### 全部 26 项的完整 XML
 
 以下配置列出模块支持的全部参数，数值与随包配置一致，可整体保存为 `mod_taering_stream.conf.xml`。保存前将空的 `default_ws_url` 改成实际媒体后端地址，例如 `ws://127.0.0.1:9000/stream`；若每次启动都会传入 URL，也可以保持为空。
 
@@ -978,7 +1098,7 @@ fs_cli -x "global_getvar conf_dir"
 
 URL 查询参数中的 `&` 在 XML 属性里必须写成 `&amp;`，双引号写成 `&quot;`。HTTP 参数、媒体参数都位于同一个 `<settings>` 中；Dialplan 的 `<action>` 则放到独立路由文件里。
 
-### 11.2 全部配置项、默认值与范围
+#### 11.2 全部配置项、默认值与范围
 
 下表区分“源码默认值”（未配置该参数时）与“随包模板值”（仓库 XML 显式设置的值）。布尔值可写 `true/false`，也接受 `yes/no`、`on/off`、`1/0`。数值使用十进制，不写 `KB/MB` 单位；XML 采样率使用整数，`16k` 简写只用于启动接口。
 
@@ -1021,7 +1141,7 @@ ring 槽位按 `ceil(buffer_ms/packet_ms)` 计算，先限制在 4～2048 槽，
 <param name="default_ws_urls" value="ws://10.0.0.13:9000/stream;ws://10.0.0.14:9000/stream"/>
 ```
 
-### 11.3 配置生效与验证
+#### 11.3 配置生效与验证
 
 修改模块配置后，在可接受媒体会话中断的维护窗口执行：
 
@@ -1038,9 +1158,9 @@ fs_cli -x "taering_stream stats"
 <load module="mod_taering_stream"/>
 ```
 
-## 12. 商业授权与离线运行
+### 12. 商业授权与离线运行
 
-### 12.1 客户侧行为
+#### 12.1 客户侧行为
 
 模块内置在线授权，客户无需另外填写授权 XML 或手工调用授权 API。模块自动发起检查；服务端签名经模块内置公钥验证后生效。
 
@@ -1072,7 +1192,7 @@ fs_cli -x "taering_stream license"
 
 `instance_conflict` 表示运行实例冲突，`client_upgrade_required` 表示服务要求升级客户端，`product_mismatch` 表示产品不匹配；应把版本和授权命令输出交给授权方核对。HTTP 创建流遇到授权容量拒绝通常返回 `START_FAILED`，不能仅凭这个错误认定 UUID 不存在。
 
-### 12.2 缓存与安装标识
+#### 12.2 缓存与安装标识
 
 默认文件位置：
 
@@ -1083,13 +1203,13 @@ ${conf_dir}/autoload_configs/mod_taering_stream.license.cache.json.installation_
 
 FreeSWITCH 运行用户需要能够创建和维护这些文件；它们是模块管理的签名缓存和身份文件，不是客户填写的配置模板。容器重建时应按部署方案保留安装标识；当前实现还会读取可用的 `/host/etc/machine-id` 作为宿主机身份来源。不要把同一安装标识复制为多个独立运行实例。
 
-## 13. 版本、运行指标与排障
+### 13. 版本、运行指标与排障
 
-### 13.1 版本能力
+#### 13.1 版本能力
 
 `taering_stream version` 返回文本键值，包括 `module/version/build_id/interrupt_play/play_progress/barge_in/capture_route/license`。其中 `interrupt_play=enabled` 表示存在该能力，实际能否打断还要看 `barge_in=enabled`；`capture_route=loopback-aware` 表示支持第 8.7 节的方向识别。`play_progress=enabled` 的事件范围见第 9.1 节，不表示提供周期进度订阅。
 
-### 13.2 stats 字段
+#### 13.2 stats 字段
 
 `taering_stream stats` 是模块级和 worker 级文本统计，不是 HTTP JSON 端点：
 
@@ -1108,7 +1228,7 @@ FreeSWITCH 运行用户需要能够创建和维护这些文件；它们是模块
 
 会话销毁后，其计数不再参与汇总；这些统计不是自进程启动以来永久递增的计数器。单会话状态和丢帧可通过 HTTP GET 或 JSON `get` 查询。
 
-### 13.3 常见问题定位
+#### 13.3 常见问题定位
 
 | 现象 | 优先检查 |
 |---|---|
@@ -1125,7 +1245,7 @@ FreeSWITCH 运行用户需要能够创建和维护这些文件；它们是模块
 
 需要详细诊断时设置 `log_debug=true` 并按第 11.3 节重载；排障完成后关闭，避免持续输出逐帧日志。
 
-## 14. FreeSWITCH 进程内集成
+### 14. FreeSWITCH 进程内集成
 
 `mod_fcc` 等同进程模块通过 FreeSWITCH API 注册表调用 `taering_stream_json`，复用第 5 节相同请求/响应契约：
 
@@ -1145,3 +1265,42 @@ switch_safe_free(result.data);
 
 当前公开接口不提供媒体会话全量列表、运行时配置修改、自动外呼、自动转人工或呼叫生命周期订阅。这些由调用方的呼叫控制系统承担，不能把模块媒体状态当成电话状态。
 
+---
+
+## 📝 版本记录
+
+| 版本 | 主要能力 |
+|---|---|
+| **0.54**（当前） | 新增 HTTP REST 控制接口（Bearer Token 鉴权）；新增结构化 `taering_stream_json` 接口（ESL / 进程内调用）；新增 Dialplan application；引入 `stream_id` / `external_id` / `request_id`（启动幂等）；Loopback A/B 腿方向自动识别；在线授权 + 离线签名缓存，未授权可 1 路试用 |
+| 0.48 | 新增 `enable_barge_in` 打断开关；`interrupt_play` 打断能力；`taering_stream::play` 事件新增 `Play-State` / `Played-Ms` / `Played-Samples` / `Playback-Generation` |
+| 0.47 及更早 | 双向 WebSocket 音频流、`mono/mixed/stereo`、暂停/恢复、断线重连、多后端轮询、`stats` 指标 |
+
+---
+
+## ❓ FAQ
+
+**Q：模块自带 ASR / TTS / VAD 吗？**
+A：不带。模块只负责“音频进出”，ASR、LLM、TTS、VAD 和插话判断由你的后端实现，可自由对接阿里云、腾讯云、讯飞、火山引擎、FunASR、Whisper、CosyVoice 等任意服务。
+
+**Q：打断是模块自动做的吗？**
+A：模块提供“执行打断”的能力（清空播放队列并回报已播进度），**何时打断**由后端判断后调用 `interrupt_playback` 或发送 WS `clear`。详见手册 4.5.5 与 8.5 节。
+
+**Q：后端返回的 TTS 是 MP3 / base64 可以吗？**
+A：兼容路径支持，但生产推荐后端先解码为单声道 `PCM16LE`（采样率与 `start.sample_rate` 一致），按 20ms/40ms 分片以二进制帧回推，延迟最低、并发最好。
+
+**Q：会影响呼叫控制吗？停止推流会挂机吗？**
+A：不会。模块只管媒体，不做外呼、应答、桥接、挂机；停止媒体流只释放媒体资源。
+
+**Q：支持多少并发？**
+A：授权后不限路数，实际取决于机器 CPU、网络和后端处理能力。建议结合 `taering_stream stats` 中的 `tx_drop/rx_drop` 做压测评估。
+
+**Q：支持哪些 FreeSWITCH 版本 / 系统？**
+A：推荐基线为 Debian 12 x86_64 + FreeSWITCH 1.10.x。其他环境请联系作者确认或定制编译。
+
+---
+
+<div align="center">
+
+如果这个模块对你有帮助，欢迎 ⭐ Star 支持；商用、定制与技术支持请 [联系作者](#-联系作者)。
+
+</div>
