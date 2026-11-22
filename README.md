@@ -6,7 +6,7 @@
 
 让 FreeSWITCH 通话直接接上你的 ASR / LLM / TTS，20ms 分片的低延迟双向 PCM，开箱即用的插话打断
 
-![version](https://img.shields.io/badge/version-0.54-blue)
+![version](https://img.shields.io/badge/version-0.55-blue)
 ![freeswitch](https://img.shields.io/badge/FreeSWITCH-1.10.x-green)
 ![os](https://img.shields.io/badge/Debian-12%20x86__64-orange)
 ![license](https://img.shields.io/badge/license-商业授权%20·%201路免费试用-red)
@@ -182,10 +182,10 @@ fs_cli -x "taering_stream <uuid> start"
 
 ---
 
-## 📘 完整集成手册（v0.54）
+## 📘 完整集成手册（v0.55）
 
 
-本文档面向购买、部署和集成 `mod_taering_stream` 的客户，说明模块当前版本 `0.54` 的公开调用方式、XML 配置、字段、返回格式、Python 示例、媒体后端协议、授权与运维功能。
+本文档面向购买、部署和集成 `mod_taering_stream` 的客户，说明模块当前版本 `0.55` 的公开调用方式、XML 配置、字段、返回格式、Python 示例、媒体后端协议、授权与运维功能。
 
 阅读索引：第 4～6 节为控制接口，第 7 节为完整 Dialplan 示例，第 8～9 节为媒体协议与事件，第 11 节为全部 XML 参数，第 12～13 节为授权与排障，第 14 节为进程内模块集成。
 
@@ -348,7 +348,7 @@ GET /api/v1/health
 成功响应，HTTP 200：
 
 ```json
-{"ok":true,"module":"taering_stream","version":"0.54","build_id":"commercial-generic-20260828"}
+{"ok":true,"module":"taering_stream","version":"0.55","build_id":"commercial-generic-20260828"}
 ```
 
 Python 示例：
@@ -1271,7 +1271,7 @@ switch_safe_free(result.data);
 
 | 版本 | 主要能力 |
 |---|---|
-| **0.54**（当前） | 新增 HTTP REST 控制接口（Bearer Token 鉴权）；新增结构化 `taering_stream_json` 接口（ESL / 进程内调用）；新增 Dialplan application；引入 `stream_id` / `external_id` / `request_id`（启动幂等）；Loopback A/B 腿方向自动识别；在线授权 + 离线签名缓存，未授权可 1 路试用 |
+| **0.55**（当前） | 新增 HTTP REST 控制接口（Bearer Token 鉴权）；新增结构化 `taering_stream_json` 接口（ESL / 进程内调用）；新增 Dialplan application；引入 `stream_id` / `external_id` / `request_id`（启动幂等）；Loopback A/B 腿方向自动识别；在线授权 + 离线签名缓存，未授权可 1 路试用 |
 | 0.48 | 新增 `enable_barge_in` 打断开关；`interrupt_play` 打断能力；`taering_stream::play` 事件新增 `Play-State` / `Played-Ms` / `Played-Samples` / `Playback-Generation` |
 | 0.47 及更早 | 双向 WebSocket 音频流、`mono/mixed/stereo`、暂停/恢复、断线重连、多后端轮询、`stats` 指标 |
 
