@@ -11,11 +11,21 @@
 ![os](https://img.shields.io/badge/Debian-12%20x86__64-orange)
 ![license](https://img.shields.io/badge/license-商业授权%20·%201路免费试用-red)
 
-[产品介绍](#-产品介绍) · [快速开始](#-快速开始) · [完整集成手册](#-完整集成手册v054) · [版本记录](#-版本记录) · [FAQ](#-faq) · [联系作者](#-联系作者)
+[Docker Hub 镜像](#docker-hub-镜像) · [产品介绍](#-产品介绍) · [快速开始](#-快速开始) · [完整集成手册](#-完整集成手册v054) · [版本记录](#-版本记录) · [FAQ](#-faq) · [联系作者](#-联系作者)
 
 </div>
 
 ---
+
+## Docker Hub 镜像
+
+在装有 Docker 的 Linux x86_64 主机上，执行以下命令即可拉取包含 `mod_taering_stream` 0.55 的 FreeSWITCH 1.10.12 镜像：
+
+```bash
+docker pull taering/freeswitch-fcc:1.10.12-fcc1.2.1-taering0.55-20261122
+```
+
+该标签的平台为 `linux/amd64`。其他可用标签见 [Docker Hub 标签列表](https://hub.docker.com/r/taering/freeswitch-fcc/tags)。
 
 ## ✨ 产品介绍
 
@@ -82,7 +92,7 @@ flowchart LR
 
 - **免费试用**：未授权状态下即可使用，最多 **1 路** 并发媒体流，功能完整无阉割，可直接做完整联调。
 - **商业授权**：授权生效后 **不限并发路数**（以机器性能为准），后台审核通过自动生效，无需重启 FreeSWITCH。
-- **获取方式**：模块以二进制交付包形式提供，**请通过下方联系方式获取交付包与商用报价**。
+- **获取方式**：可直接[拉取 Docker Hub 镜像](#docker-hub-镜像)。如需在现有 FreeSWITCH 上单独安装模块，或咨询商用报价，请联系作者。
 
 ### 📮 联系作者
 
