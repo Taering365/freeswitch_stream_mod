@@ -17,15 +17,7 @@
 
 ---
 
-## Docker Hub 镜像
 
-在装有 Docker 的 Linux x86_64 主机上，执行以下命令即可拉取包含 `mod_taering_stream` 0.55 的 FreeSWITCH 1.10.12 镜像：
-
-```bash
-docker pull taering/freeswitch-fcc:1.10.12-fcc1.2.1-taering0.55-20261122
-```
-
-该标签的平台为 `linux/amd64`。其他可用标签见 [Docker Hub 标签列表](https://hub.docker.com/r/taering/freeswitch-fcc/tags)。
 
 ## ✨ 产品介绍
 
